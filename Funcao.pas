@@ -10,7 +10,7 @@ function  SoNum(pValor : string) : string;
 function  FormatarCPF_CNPJ(CPF_CNPJ: string = ''): string;
 function  FormatarTelefone(pTelefone : String):String;
 function  FormatarCEP(pCep : String):String;
-function CalculaEmail(const Value: string): Boolean;
+function  CalculaEmail(const Value: string): Boolean;
 
 implementation
 

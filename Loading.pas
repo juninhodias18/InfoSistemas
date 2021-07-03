@@ -16,6 +16,7 @@ type
           class var Animacao : TFloatAnimation;
     public
           class procedure Show(const Frm : Tform; const msg : string);
+          class procedure AlteraDescricao(const Frm : Tform; const msg : string);
           class procedure Hide;
   end;
 
@@ -23,6 +24,14 @@ implementation
 
 { TLoading }
 
+
+class procedure TLoading.AlteraDescricao(const Frm: Tform; const msg: string);
+begin
+// Label do texto...
+        Mensagem.Text := msg;
+        Mensagem.SetFocus;
+        Application.ProcessMessages;
+end;
 
 class procedure TLoading.Hide;
 begin
@@ -139,6 +148,8 @@ begin
             FService.HideVirtualKeyboard;
         end;
         FService := nil;
+
+        Application.ProcessMessages;
 end;
 
 

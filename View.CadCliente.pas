@@ -10,7 +10,8 @@ uses
   Data.Bind.ObjectScope, System.JSON, IniFiles, IdComponent,
   IdTCPConnection, IdTCPClient, IdHTTP, IdBaseComponent, IdMessage,
   IdExplicitTLSClientServerBase, IdMessageClient, IdSMTPBase, IdSMTP, IdIOHandler,
-  IdIOHandlerSocket, IdIOHandlerStack, IdSSL, IdSSLOpenSSL, IdAttachmentFile, IdText;
+  IdIOHandlerSocket, IdIOHandlerStack, IdSSL, IdSSLOpenSSL, IdAttachmentFile, IdText,
+  FMX.Memo.Types, FMX.ScrollBox, FMX.Memo, XMLDoc, XMLIntf;
 
 type
   TfrmCadCliente = class(TForm)
@@ -65,14 +66,20 @@ type
     procedure FormClose(Sender: TObject; var Action: TCloseAction);
     procedure btnFecharClick(Sender: TObject);
     procedure edtCepTyping(Sender: TObject);
+    procedure Button1Click(Sender: TObject);
+    procedure FormKeyDown(Sender: TObject; var Key: Word; var KeyChar: Char;
+      Shift: TShiftState);
   private
+        mmCorpo : TMemo;
         cadCliente : TClientes;
     { Private declarations }
         procedure SetForm;
         function  CamposObrigatorios : boolean;
         procedure BuscaCEP(pCEP : string);
         procedure CarregaCEP(pJSON : string);
-        function  EnviarEmail(const AAssunto, ADestino, AAnexo: String; ACorpo: TStrings): Boolean;
+        function  EnviarEmail(const AAssunto, ADestino, AAnexo: String): Boolean;
+        procedure GeraCorpoEmail;
+        function  GeraXMLEmail: string;
   public
     { Public declarations }
   end;
@@ -84,7 +91,7 @@ implementation
 
 {$R *.fmx}
 
-uses FuncoesHelpers, Funcao, DataModulo, FunctionEdits, Loading;
+uses Funcao, DataModulo, FunctionEdits, Loading;
 
 { TForm1 }
 
@@ -99,16 +106,22 @@ begin
 end;
 
 procedure TfrmCadCliente.btnSalvarClick(Sender: TObject);
+var mAnexo : string;
 begin
         if not CamposObrigatorios then Abort;
 
-                //TLoading.Show(Form1, 'Aguarde... Estamos trabalhando na sua requisição. Isso pode demorar alguns segundos...');
-        TLoading.Show(frmCadCliente, 'Aguarde' + #13 + 'Salvando...');
+
+        TLoading.Show(frmCadCliente, 'Aguarde' + #13 + 'Gerando email...');
+        GeraCorpoEmail;
+        TLoading.AlteraDescricao(frmCadCliente, 'Aguarde' + #13 + 'Gerando XML...');
+        mAnexo := GeraXMLEmail;
+
+        //TLoading.Show(Form1, 'Aguarde... Estamos trabalhando na sua requisição. Isso pode demorar alguns segundos...');
+        TLoading.AlteraDescricao(frmCadCliente, 'Aguarde' + #13 + 'Salvando...');
 
 
-        TThread.CreateAnonymousThread(procedure
-        begin
-                sleep(3000);
+        TThread.CreateAnonymousThread(procedure begin
+                sleep(1500);
                 if cadCliente = nil then cadCliente := TClientes.CriaObjeto;
                 cadCliente.SetNome(edtNome.Text);
                 cadCliente.SetIdent(edtIdentidade.Text);
@@ -125,12 +138,12 @@ begin
                 cadCliente.SetUf(edtUf.Text);
                 cadCliente.SetCidade(edtCidade.Text);
 
-                TThread.Synchronize(nil, procedure
-                begin
+                EnviarEmail('Bem vindo!', edtEmail.Text, mAnexo);
+
+                TThread.Synchronize(nil, procedure begin
                         TLoading.Hide;
                         LimparForm(frmCadCliente);
                 end);
-
         end).Start;
 end;
 
@@ -140,23 +153,23 @@ begin
         if Length(pCEP) <> 8  then abort;
 
         TLoading.Show(frmCadCliente, 'Aguarde' + #13 + 'Buscando CEP...');
-
-
-        TThread.CreateAnonymousThread(procedure
-        begin
+        TThread.CreateAnonymousThread(procedure begin
                 mCep := 'http://viacep.com.br/ws/'+SoNum(pCEP)+'/json';
                 RESTClient1.BaseURL := mCep;
                 RESTRequest1.Execute;
                 CarregaCEP(RESTRequest1.Response.JSONText);
 
-                TThread.Synchronize(nil, procedure
-                begin
+                TThread.Synchronize(nil, procedure begin
                         TLoading.Hide;
                         edtLogradouro.SetFocus;
                         edtLogradouro.SelectAll;
                 end);
-
         end).Start;
+end;
+
+procedure TfrmCadCliente.Button1Click(Sender: TObject);
+begin
+        GeraXMLEmail;
 end;
 
 function TfrmCadCliente.CamposObrigatorios: boolean;
@@ -185,14 +198,12 @@ begin
         if Not Result then
                 MessageDlg('Atençao!' +#13+
                            'Campos destacados em vermelho são obrigatórios',TMsgDlgType.mtInformation,[TMsgDlgBtn.mbok],0);
-
 end;
 
 procedure TfrmCadCliente.CarregaCEP(pJSON: string);
 var jsonRaiz: TJSONObject;
 begin
         jsonRaiz := TJSONObject.ParseJSONValue(pJson) as TJSONObject;
-
         try
                 edtCep.Text         := jsonRaiz.GetValue<string>('cep');
                 edtLogradouro.Text  := jsonRaiz.GetValue<string>('logradouro');
@@ -211,115 +222,15 @@ begin
         BuscaCEP(edtCep.Text);
 end;
 
-function TfrmCadCliente.EnviarEmail(const AAssunto, ADestino, AAnexo: String; ACorpo: TStrings): Boolean;
-var
-  IniFile              : TIniFile;
-  sFrom                : String;
-  sBccList             : String;
-  sHost                : String;
-  iPort                : Integer;
-  sUserName            : String;
-  sPassword            : String;
-
-  idMsg                : TIdMessage;
-  IdText               : TIdText;
-  idSMTP               : TIdSMTP;
-  IdSSLIOHandlerSocket : TIdSSLIOHandlerSocketOpenSSL;
-begin
-  try
-    try
-      //Criação e leitura do arquivo INI com as configurações
-      IniFile                          := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'Config.ini');
-      sFrom                            := IniFile.ReadString('Email' , 'From'     , sFrom);
-      sBccList                         := IniFile.ReadString('Email' , 'BccList'  , sBccList);
-      sHost                            := IniFile.ReadString('Email' , 'Host'     , sHost);
-      iPort                            := IniFile.ReadInteger('Email', 'Port'     , iPort);
-      sUserName                        := IniFile.ReadString('Email' , 'UserName' , sUserName);
-      sPassword                        := IniFile.ReadString('Email' , 'Password' , sPassword);
-
-      //Configura os parâmetros necessários para SSL
-      IdSSLIOHandlerSocket                   := TIdSSLIOHandlerSocketOpenSSL.Create(Self);
-      IdSSLIOHandlerSocket.SSLOptions.Method := sslvSSLv23;
-      IdSSLIOHandlerSocket.SSLOptions.Mode  := sslmClient;
-
-      //Variável referente a mensagem
-      idMsg                            := TIdMessage.Create(Self);
-      idMsg.CharSet                    := 'utf-8';
-      idMsg.Encoding                   := meMIME;
-      idMsg.From.Name                  := 'MEU ASSUNTO';
-      idMsg.From.Address               := sFrom;
-      idMsg.Priority                   := mpNormal;
-      idMsg.Subject                    := AAssunto;
-
-      //Add Destinatário(s)
-      idMsg.Recipients.Add;
-      idMsg.Recipients.EMailAddresses := ADestino;
-      idMsg.CCList.EMailAddresses      := 'PARA@DOMINIO.COM.BR';
-      idMsg.BccList.EMailAddresses    := sBccList;
-      idMsg.BccList.EMailAddresses    := 'PARA@DOMINIO.COM.BR'; //Cópia Oculta
-
-      //Variável do texto
-      idText := TIdText.Create(idMsg.MessageParts);
-      idText.Body.Add(ACorpo.Text);
-      idText.ContentType := 'text/html; text/plain; charset=iso-8859-1';
-
-      //Prepara o Servidor
-      IdSMTP                           := TIdSMTP.Create(Self);
-      IdSMTP.IOHandler                 := IdSSLIOHandlerSocket;
-      IdSMTP.UseTLS                    := utUseImplicitTLS;
-      IdSMTP.AuthType                  := satDefault;
-      IdSMTP.Host                      := sHost;
-      IdSMTP.AuthType                  := satDefault;
-      IdSMTP.Port                      := iPort;
-      IdSMTP.Username                  := sUserName;
-      IdSMTP.Password                  := sPassword;
-
-      //Conecta e Autentica
-      IdSMTP.Connect;
-      IdSMTP.Authenticate;
-
-      if AAnexo &lt;&gt; EmptyStr then
-        if FileExists(AAnexo) then
-          TIdAttachmentFile.Create(idMsg.MessageParts, AAnexo);
-
-      //Se a conexão foi bem sucedida, envia a mensagem
-      if IdSMTP.Connected then
-      begin
-        try
-          IdSMTP.Send(idMsg);
-        except on E:Exception do
-          begin
-            ShowMessage('Erro ao tentar enviar: ' + E.Message);
-          end;
-        end;
-      end;
-
-      //Depois de tudo pronto, desconecta do servidor SMTP
-      if IdSMTP.Connected then
-        IdSMTP.Disconnect;
-
-      Result := True;
-    finally
-      IniFile.Free;
-
-      UnLoadOpenSSLLibrary;
-
-      FreeAndNil(idMsg);
-      FreeAndNil(IdSSLIOHandlerSocket);
-      FreeAndNil(idSMTP);
-    end;
-  except on e:Exception do
-    begin
-      Result := False;
-    end;
-  end;
-end;
-
 procedure TfrmCadCliente.FormClose(Sender: TObject; var Action: TCloseAction);
 begin
         if MessageDlg('Atençao!' +#13+ 'Deseja sair do sistema?',
                 TMsgDlgType.mtWarning,[TMsgDlgBtn.mbYes, TMsgDlgBtn.mbNo],0) = mrNo then
-                        Action := TCloseAction.caNone;
+                        Action := TCloseAction.caNone
+        else if mmCorpo <> nil then begin
+                mmCorpo := nil;
+                mmCorpo.Free;
+        end;
 end;
 
 procedure TfrmCadCliente.FormCreate(Sender: TObject);
@@ -327,17 +238,81 @@ begin
         SetForm;
 end;
 
+procedure TfrmCadCliente.FormKeyDown(Sender: TObject; var Key: Word;
+  var KeyChar: Char; Shift: TShiftState);
+begin
+        case Key of
+                vkEscape: btnFechar.OnClick(btnFechar);
+                vkF3    : btnLimpar.OnClick(btnLimpar);
+                vkF5    : btnSalvar.OnClick(btnSalvar);
+                vkF10   : btnRecuperar.OnClick(btnRecuperar);
+        end;
+
+end;
+
+procedure TfrmCadCliente.GeraCorpoEmail;
+begin
+        if mmCorpo = nil then
+                mmCorpo := TMemo.Create(nil);
+
+        mmCorpo.Lines.Add('         nome: ' + edtNome.Text          + '<br>');
+        mmCorpo.Lines.Add('        ident: ' + edtIdentidade.Text    + '<br>');
+        mmCorpo.Lines.Add('          cpf: ' + edtCpf.Text           + '<br>');
+        mmCorpo.Lines.Add('     telefone: ' + edtTelefone.Text      + '<br>');
+        mmCorpo.Lines.Add('        email: ' + edtEmail.Text         + '<br>');
+
+        mmCorpo.Lines.Add('          cep: ' + edtCep.Text           + '<br>');
+        mmCorpo.Lines.Add('   logradouro: ' + edtLogradouro.Text    + '<br>');
+        mmCorpo.Lines.Add('logradouroNro: ' + edtLogradouroNro.Text + '<br>');
+        mmCorpo.Lines.Add('       bairro: ' + edtBairro.Text        + '<br>');
+        mmCorpo.Lines.Add('  complemento: ' + edtComplemento.Text   + '<br>');
+        mmCorpo.Lines.Add('         pais: ' + edtPais.Text          + '<br>');
+        mmCorpo.Lines.Add('           uf: ' + edtUf.Text          + '<br>');
+        mmCorpo.Lines.Add('       cidade: ' + edtCidade.Text        + '<br>');
+end;
+
+function TfrmCadCliente.GeraXMLEmail : string;
+var
+  XMLDocument: TXMLDocument;
+  NodeTabela, NodeRegistro, NodeEndereco: IXMLNode;
+  I: Integer;
+begin
+        XMLDocument := TXMLDocument.Create(Self);
+        try
+                XMLDocument.Active := True;
+                NodeTabela := XMLDocument.AddChild('CadatroDeClientes');
+
+                NodeRegistro := NodeTabela.AddChild('DadosPessoais');
+                NodeRegistro.ChildValues['Nome']       := edtNome.Text;
+                NodeRegistro.ChildValues['Identidade'] := edtIdentidade.Text;
+                NodeRegistro.ChildValues['CPF']        := edtCpf.Text;
+                NodeRegistro.ChildValues['Telefone']   := edtTelefone.Text;
+                NodeRegistro.ChildValues['Email']      := edtEmail.Text;
+
+                NodeEndereco := NodeTabela.AddChild('Endereco');
+                NodeEndereco.ChildValues['CEP']         := edtCep.Text;
+                NodeEndereco.ChildValues['Logradouro']  := edtLogradouro.Text;
+                NodeEndereco.ChildValues['Nro']          := edtLogradouroNro.Text;
+                NodeEndereco.ChildValues['Bairro']      := edtBairro.Text;
+                NodeEndereco.ChildValues['Complemento'] := edtComplemento.Text;
+                NodeEndereco.ChildValues['Pais']        := edtPais.Text;
+                NodeEndereco.ChildValues['UF']          := edtUf.Text;
+                NodeEndereco.ChildValues['Cidade']      := edtCidade.Text;
+
+                Result := Trim(edtNome.Text)+'.xml';
+                XMLDocument.SaveToFile(Result);
+        finally
+                XMLDocument.Free;
+        end;
+end;
+
 procedure TfrmCadCliente.btnRecuperarClick(Sender: TObject);
 begin
         if cadCliente = nil then Abort;
 
-                 //TLoading.Show(Form1, 'Aguarde... Estamos trabalhando na sua requisição. Isso pode demorar alguns segundos...');
         TLoading.Show(frmCadCliente, 'Aguarde' + #13 + 'Carregando suas informações...');
-
-
-        TThread.CreateAnonymousThread(procedure
-        begin
-                sleep(3000);
+        TThread.CreateAnonymousThread(procedure begin
+                sleep(1500);
                 edtNome.Text       := cadCliente.GetNome;
                 edtIdentidade.Text := cadCliente.GetIdent;
                 edtCpf.Text        := cadCliente.GetCpf;
@@ -353,14 +328,10 @@ begin
                 edtUf.Text            := cadCliente.GetUf;
                 edtCidade.Text        := cadCliente.GetCidade;
 
-                TThread.Synchronize(nil, procedure
-                begin
+                TThread.Synchronize(nil, procedure begin
                         TLoading.Hide;
                 end);
-
         end).Start;
-
-
 end;
 
 procedure TfrmCadCliente.SetForm;
@@ -391,6 +362,87 @@ begin
         // EDITS ENDERECO
         //----------------
         edtCep.OnExit := FunctionEdit.EdtFormataCEPOnExit;
+end;
+
+function TfrmCadCliente.EnviarEmail(const AAssunto, ADestino, AAnexo: String): Boolean;
+var
+  sFrom                : String;
+  sBccList             : String;
+  sHost                : String;
+  iPort                : Integer;
+  sUserName            : String;
+  sPassword            : String;
+
+  idMsg                : TIdMessage;
+  idText               : TIdText;
+  idSMTP               : TIdSMTP;
+  idSSLIOHandlerSocket : TIdSSLIOHandlerSocketOpenSSL;
+begin
+        try
+                try
+                        sFrom                            := 'marcos.junior.send@gmail.com';
+                        sBccList                         := 'juninhodias16@gmail.com';
+                        sHost                            := 'smtp.gmail.com';
+                        iPort                            := 465;
+                        sUserName                        := 'marcos.junior.send@gmail.com';
+                        sPassword                        := 'mdias1997Jr';
+
+                        IdSSLIOHandlerSocket                   := TIdSSLIOHandlerSocketOpenSSL.Create(Self);
+                        IdSSLIOHandlerSocket.SSLOptions.Method := sslvSSLv23;
+                        IdSSLIOHandlerSocket.SSLOptions.Mode   := sslmClient;
+
+                        idMsg                            := TIdMessage.Create(Self);
+                        idMsg.CharSet                    := 'utf-8';
+                        idMsg.Encoding                   := meMIME;
+                        idMsg.From.Name                  := 'Seu cadastro';
+                        idMsg.From.Address               := sFrom;
+                        idMsg.Priority                   := mpNormal;
+                        idMsg.Subject                    := AAssunto;
+
+                        idMsg.Recipients.Add;
+                        idMsg.Recipients.EMailAddresses := ADestino;
+                        idMsg.BccList.EMailAddresses    := sBccList;
+
+                        idText := TIdText.Create(idMsg.MessageParts);
+                        idText.Body.Add(mmCorpo.Text);
+                        idText.ContentType := 'text/html; text/plain; charset=iso-8859-1';
+
+                        idSMTP                           := TIdSMTP.Create(Self);
+                        idSMTP.IOHandler                 := IdSSLIOHandlerSocket;
+                        idSMTP.UseTLS                    := utUseImplicitTLS;
+                        idSMTP.AuthType                  := satDefault;
+                        idSMTP.Host                      := sHost;
+                        idSMTP.AuthType                  := satDefault;
+                        idSMTP.Port                      := iPort;
+                        idSMTP.Username                  := sUserName;
+                        idSMTP.Password                  := sPassword;
+
+                        idSMTP.Connect;
+                        idSMTP.Authenticate;
+
+                        if (AAnexo <> EmptyStr) AND FileExists(AAnexo) then
+                                TIdAttachmentFile.Create(idMsg.MessageParts, AAnexo);
+
+                        if idSMTP.Connected then begin
+                                try
+                                        IdSMTP.Send(idMsg);
+                                except on E:Exception do
+                                    ShowMessage('Erro ao tentar enviar: ' + E.Message);
+                                end;
+                        end;
+
+                        if idSMTP.Connected then idSMTP.Disconnect;
+
+                        Result := True;
+                finally
+                        UnLoadOpenSSLLibrary;
+                        FreeAndNil(idMsg);
+                        FreeAndNil(idSSLIOHandlerSocket);
+                        FreeAndNil(idSMTP);
+                end;
+        except on e:Exception do
+                        Result := False;
+        end;
 end;
 
 end.

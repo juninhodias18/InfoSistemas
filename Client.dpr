@@ -5,7 +5,6 @@ uses
   FMX.Forms,
   View.CadCliente in 'View.CadCliente.pas' {frmCadCliente},
   FunctionRectangles in 'FunctionRectangles.pas',
-  FuncoesHelpers in 'FuncoesHelpers.pas',
   Funcao in 'Funcao.pas',
   DataModulo in 'DataModulo.pas' {DM: TDataModule},
   FunctionEdits in 'FunctionEdits.pas',

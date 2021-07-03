@@ -201,7 +201,6 @@
             <FormType>fmx</FormType>
         </DCCReference>
         <DCCReference Include="FunctionRectangles.pas"/>
-        <DCCReference Include="FuncoesHelpers.pas"/>
         <DCCReference Include="Funcao.pas"/>
         <DCCReference Include="DataModulo.pas">
             <Form>DM</Form>
